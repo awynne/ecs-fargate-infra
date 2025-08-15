@@ -1,8 +1,8 @@
-# Component Diagram - ECS Fargate Infrastructure
+# Component Diagram - ECS Fargate Infrastructure for Ruby on Rails
 
 ## Overview
 
-This document provides detailed component diagrams showing the relationships and interactions between different parts of the ECS Fargate infrastructure.
+This document provides detailed component diagrams showing the relationships and interactions between different parts of the ECS Fargate infrastructure optimized for **Ruby on Rails applications** with **PostgreSQL database**.
 
 ## High-Level Component Architecture
 
@@ -17,19 +17,22 @@ This document provides detailed component diagrams showing the relationships and
 │  │  │                                                     │  │  │
 │  │  │  ┌─────────────────┐    ┌─────────────────┐        │  │  │
 │  │  │  │       ALB       │    │   ECS Fargate   │        │  │  │
-│  │  │  │   (Port 80/443) │────│     Tasks       │        │  │  │
-│  │  │  │                 │    │  (Port 8080)    │        │  │  │
+│  │  │  │   (Port 80/443) │────│ Rails App Tasks │        │  │  │
+│  │  │  │                 │    │  (Port 3000)    │        │  │  │
 │  │  │  └─────────────────┘    └─────────────────┘        │  │  │
 │  │  │                                  │                 │  │  │
 │  │  └──────────────────────────────────│─────────────────┘  │  │
 │  │                                     │                    │  │
-│  └─────────────────────────────────────│────────────────────┘  │
-│                                        │                       │
-│  ┌─────────────────────────────────────│────────────────────┐  │
-│  │                                     ▼                    │  │
-│  │            DynamoDB Tables (Managed Service)             │  │
-│  │                                                          │  │
-│  └──────────────────────────────────────────────────────────┘  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │              Private Subnet (10.0.2.0/24)          │  │  │
+│  │  │                                                     │  │  │
+│  │  │  ┌─────────────────────────────────────────────────│  │  │
+│  │  │  │             RDS PostgreSQL                      │  │  │
+│  │  │  │          (db.t3.micro)                          │  │  │
+│  │  │  │            Port 5432                            │  │  │
+│  │  │  └─────────────────────────────────────────────────│  │  │
+│  │  └─────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │              Supporting Services                         │  │
@@ -49,89 +52,122 @@ This document provides detailed component diagrams showing the relationships and
 ```
 VPC: 10.0.0.0/16
 ├── Public Subnet: 10.0.1.0/24 (AZ: us-east-1a)
+│   ├── ALB (Application Load Balancer)
+│   └── ECS Fargate Tasks (Rails Application)
+├── Private Subnet: 10.0.2.0/24 (AZ: us-east-1a)
+│   └── RDS PostgreSQL (db.t3.micro)
 ├── Internet Gateway
-└── Route Table (0.0.0.0/0 → IGW)
+└── Route Tables
+    ├── Public Route Table (0.0.0.0/0 → IGW)
+    └── Private Route Table (local VPC traffic only)
 ```
 
 #### Security Groups
 ```
-ALB Security Group
+ALB Security Group (alb-sg)
 ├── Inbound: 0.0.0.0/0:80 (HTTP)
 ├── Inbound: 0.0.0.0/0:443 (HTTPS)
-└── Outbound: ECS-SG:8080
+└── Outbound: ECS-SG:3000 (Rails application)
 
-ECS Security Group  
-├── Inbound: ALB-SG:8080
-└── Outbound: 0.0.0.0/0:443 (HTTPS for DynamoDB/AWS APIs)
+ECS Security Group (ecs-sg)
+├── Inbound: ALB-SG:3000 (Rails application port)
+└── Outbound: RDS-SG:5432 (PostgreSQL) + 0.0.0.0/0:443 (AWS APIs)
+
+RDS Security Group (rds-sg)
+├── Inbound: ECS-SG:5432 (PostgreSQL)
+└── Outbound: None (database doesn't initiate outbound connections)
 ```
 
 ### Compute Components
 
 #### ECS Cluster Architecture
 ```
-ECS Cluster: ecs-fargate-cluster
+ECS Cluster: rails-fargate-cluster
 │
-├── Service: web-service
-│   ├── Task Definition: web-task:latest
+├── Service: rails-web-service
+│   ├── Task Definition: rails-app:latest
 │   │   ├── CPU: 256 units (0.25 vCPU)
 │   │   ├── Memory: 512 MB
-│   │   ├── Container: web-app
-│   │   │   ├── Image: {account}.dkr.ecr.{region}.amazonaws.com/web-app:latest
-│   │   │   ├── Port: 8080
-│   │   │   └── Environment Variables (from Parameter Store)
-│   │   └── IAM Task Role: ecs-task-role
-│   │       ├── DynamoDB access
-│   │       ├── Parameter Store access
+│   │   ├── Container: rails-app
+│   │   │   ├── Image: {account}.dkr.ecr.{region}.amazonaws.com/rails-app:latest
+│   │   │   ├── Port: 3000 (Rails default)
+│   │   │   ├── Environment Variables:
+│   │   │   │   ├── RAILS_ENV=production
+│   │   │   │   ├── DATABASE_URL (from Parameter Store)
+│   │   │   │   └── SECRET_KEY_BASE (from Parameter Store)
+│   │   │   └── Health Check: GET /health
+│   │   └── IAM Task Role: ecs-rails-task-role
+│   │       ├── RDS PostgreSQL access
+│   │       ├── Parameter Store access (database credentials)
 │   │       └── CloudWatch Logs access
 │   │
 │   ├── Desired Count: 1 (development), 0 (off-hours)
 │   ├── Auto Scaling Target: 1-3 tasks
-│   └── Health Check: /health endpoint
+│   ├── Health Check: Rails /health endpoint
+│   └── Load Balancer Integration: Target Group registration
 │
 └── Service Discovery: None (cost optimization)
 ```
 
 #### Application Load Balancer
 ```
-ALB: ecs-fargate-alb
+ALB: rails-fargate-alb
 │
 ├── Listener: HTTP:80
 │   └── Action: Redirect to HTTPS
 │
 ├── Listener: HTTPS:443
 │   ├── SSL Certificate: AWS Certificate Manager
-│   └── Target Group: ecs-tasks-tg
-│       ├── Protocol: HTTP:8080
-│       ├── Health Check: GET /health
+│   └── Target Group: rails-tasks-tg
+│       ├── Protocol: HTTP:3000 (Rails application)
+│       ├── Health Check: GET /health (Rails health endpoint)
 │       ├── Health Check Interval: 30s
-│       └── Healthy Threshold: 2
+│       ├── Healthy Threshold: 2
+│       ├── Unhealthy Threshold: 5
+│       └── Health Check Timeout: 10s
 │
 └── Access Logs: Disabled (cost optimization)
 ```
 
 ### Data Components
 
-#### DynamoDB Design
+#### RDS PostgreSQL Configuration
 ```
-DynamoDB Tables
+RDS Instance: rails-postgres-db
 │
-├── Primary Table: app-data
-│   ├── Partition Key: PK (String)
-│   ├── Sort Key: SK (String) 
-│   ├── Billing Mode: On-demand
-│   ├── Encryption: AWS Managed Keys
-│   └── Point-in-time Recovery: Disabled (cost)
-│
-└── Global Secondary Indexes: None initially
+├── Engine: PostgreSQL 15.x (latest in Free Tier)
+├── Instance Class: db.t3.micro (1 vCPU, 1GB RAM)
+├── Storage: 20GB General Purpose SSD (gp2)
+├── Multi-AZ: Disabled (single AZ for cost optimization)
+├── Backup Configuration:
+│   ├── Backup Retention: 7 days (minimum)
+│   ├── Backup Window: 03:00-04:00 UTC (off-hours)
+│   └── Backup Storage: 20GB (included in Free Tier)
+├── Maintenance Window: Sunday 04:00-05:00 UTC
+├── Encryption: Disabled (to stay in Free Tier)
+├── Performance Insights: Disabled (cost optimization)
+└── Enhanced Monitoring: Disabled (cost optimization)
 ```
 
-**Single Table Design Example**:
-```
-PK                    SK                    Data
-USER#12345           PROFILE               {name, email, ...}
-USER#12345           SESSION#abc123        {token, expires, ...}
-PROJECT#67890        METADATA              {name, description, ...}
-PROJECT#67890        TASK#001              {title, status, ...}
+**Database Schema**: 
+Rails ActiveRecord will manage schema through migrations:
+```sql
+-- Example Rails-managed tables
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email VARCHAR NOT NULL UNIQUE,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE posts (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR NOT NULL,
+  content TEXT,
+  user_id INTEGER REFERENCES users(id),
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL
+);
 ```
 
 ### Supporting Services
@@ -141,20 +177,24 @@ PROJECT#67890        TASK#001              {title, status, ...}
 CloudWatch
 │
 ├── Log Groups
-│   ├── /ecs/web-task (7-day retention)
-│   ├── /aws/applicationloadbalancer/access (disabled)
-│   └── Custom Application Logs
+│   ├── /ecs/rails-app (7-day retention)
+│   ├── /aws/rds/instance/rails-postgres-db/postgresql (7-day retention)
+│   ├── /aws/applicationloadbalancer/access (disabled for cost)
+│   └── Rails Application Logs (via Rails logger)
 │
 ├── Metrics
-│   ├── ECS Service Metrics (CPU, Memory)
-│   ├── ALB Metrics (RequestCount, TargetResponseTime)
-│   ├── DynamoDB Metrics (ConsumedCapacity)
-│   └── Custom Application Metrics (limited to 10)
+│   ├── ECS Service Metrics (CPU, Memory, Task Count)
+│   ├── ALB Metrics (RequestCount, TargetResponseTime, HTTPCode_Target_2XX)
+│   ├── RDS Metrics (CPUUtilization, DatabaseConnections, FreeStorageSpace)
+│   └── Custom Rails Metrics (limited to 10 for Free Tier)
 │
 └── Alarms
-    ├── ECS CPU > 80% (scale up)
-    ├── ECS CPU < 20% (scale down)
-    ├── ALB 5xx errors > 10/minute
+    ├── ECS CPU > 80% (scale up Rails tasks)
+    ├── ECS CPU < 20% (scale down Rails tasks)
+    ├── RDS CPU > 80% (performance alert)
+    ├── RDS Connections > 15 (connection pool alert)
+    ├── ALB 5xx errors > 10/minute (Rails application errors)
+    ├── RDS Free Tier hours > 600/month (80% threshold)
     └── Monthly cost > $8 (80% of budget)
 ```
 
@@ -162,18 +202,21 @@ CloudWatch
 ```
 Parameter Store
 │
-├── /app/environment (String)
-├── /app/database/table-name (String)
-├── /app/secrets/api-key (SecureString)
-└── /app/config/log-level (String)
+├── /rails/production/database_url (SecureString)
+│   └── postgresql://username:password@host:5432/database
+├── /rails/production/secret_key_base (SecureString)
+├── /rails/production/rails_env (String) → "production"
+├── /rails/production/log_level (String) → "info"
+└── /rails/production/database_pool_size (String) → "5"
 ```
 
 #### Elastic Container Registry
 ```
-ECR Repository: web-app
-├── URI: {account}.dkr.ecr.{region}.amazonaws.com/web-app
-├── Lifecycle Policy: Keep last 10 images
-└── Vulnerability Scanning: Enabled
+ECR Repository: rails-app
+├── URI: {account}.dkr.ecr.{region}.amazonaws.com/rails-app
+├── Lifecycle Policy: Keep last 10 images (cost optimization)
+├── Vulnerability Scanning: Enabled
+└── Image Tags: latest, v1.0.0, v1.0.1, etc.
 ```
 
 ## Data Flow Diagrams
@@ -184,16 +227,16 @@ Internet User
      │ HTTPS (443)
      ▼
 Application Load Balancer
-     │ HTTP (8080)
+     │ HTTP (3000)
      ▼
-ECS Fargate Task
-     │ AWS SDK
+ECS Fargate Task (Rails App)
+     │ ActiveRecord/pg gem
      ▼
-DynamoDB Table
-     │ Response
+RDS PostgreSQL
+     │ SQL Result Set
      ▼
-ECS Fargate Task
-     │ HTTP Response
+ECS Fargate Task (Rails App)
+     │ Rails Response (JSON/HTML)
      ▼
 Application Load Balancer
      │ HTTPS Response
@@ -204,53 +247,78 @@ Internet User
 ### Deployment Flow
 ```
 Developer
-     │ docker push
+     │ docker build & push
      ▼
-ECR Repository
-     │ new image
+ECR Repository (rails-app)
+     │ new Rails image
      ▼
 ECS Service Update
      │ rolling deployment
      ▼
-New Task Definition
-     │ health check
+New Rails Task Definition
+     │ Rails health check (/health)
      ▼
 Target Group Registration
-     │ traffic routing
+     │ ALB traffic routing
      ▼
-Active Application
+Active Rails Application
+
+Database Migration Flow:
+```
+Rails Container Startup
+     │ bundle exec rails db:migrate
+     ▼
+RDS PostgreSQL
+     │ schema updates
+     ▼
+Rails Application Ready
+```
 ```
 
 ### Auto Scaling Flow
 ```
 CloudWatch Metrics
-     │ CPU > 80%
+     │ Rails App CPU > 80%
      ▼
-Auto Scaling Policy
-     │ scale out
+ECS Auto Scaling Policy
+     │ scale out Rails tasks
      ▼
 ECS Service
-     │ launch new task
+     │ launch new Rails task
      ▼
-Task Placement
-     │ register with ALB
+Task Placement (Public Subnet)
+     │ register with ALB Target Group
      ▼
-Load Distribution
+Load Distribution Across Rails Tasks
+```
+
+### Cost Optimization Scheduling
+```
+CloudWatch Events (Cron)
+     │ 
+     ├── 9 AM Weekdays: Start RDS + Scale ECS to 1
+     ├── 6 PM Weekdays: Scale ECS to 0 + Stop RDS  
+     └── Weekends: Keep RDS stopped, ECS at 0
 ```
 
 ## Security Architecture
 
 ### IAM Roles and Policies
 ```
-ECS Task Execution Role
+ECS Task Execution Role (ecs-rails-execution-role)
 ├── AmazonECSTaskExecutionRolePolicy
-├── ECR access (pull images)
-└── CloudWatch Logs access
+├── ECR access (pull Rails images)
+├── CloudWatch Logs access
+└── Parameter Store read access (for environment variables)
 
-ECS Task Role
-├── DynamoDB access (specific tables)
-├── Parameter Store read access
-└── CloudWatch custom metrics
+ECS Task Role (ecs-rails-task-role)
+├── RDS Connect access (specific database)
+├── Parameter Store read access (database credentials)
+├── CloudWatch custom metrics
+└── CloudWatch Logs write access
+
+RDS Enhanced Monitoring Role
+└── (Managed by AWS, if enabled)
 
 ALB Service Role
 └── (Managed by AWS)
@@ -260,10 +328,11 @@ ALB Service Role
 ```
 Defense in Depth
 │
-├── Edge: ALB with WAF (optional, cost consideration)
-├── Network: Security Groups (stateful firewall)
-├── Application: Container-level security
-└── Data: DynamoDB encryption at rest
+├── Edge: ALB with SSL termination (WAF optional, cost consideration)
+├── Network: Security Groups (stateful firewall rules)
+├── Application: Rails application security (CSRF, XSS protection)
+├── Database: RDS in private subnet, encrypted connections
+└── Data: RDS encryption at rest (optional, additional cost)
 ```
 
 ## Cost Optimization Components
@@ -272,8 +341,9 @@ Defense in Depth
 ```
 Cost Monitoring
 │
-├── ECS Fargate: 20GB-hours/month
-├── DynamoDB: 25GB + 25 RCU/WCU
+├── ECS Fargate: 20GB-hours/month (Rails tasks)
+├── RDS PostgreSQL: 750 hours/month db.t3.micro
+├── RDS Storage: 20GB + 20GB backup
 ├── ALB: 750 hours + 15GB processing
 ├── CloudWatch: 5GB logs + 10 metrics
 └── Parameter Store: 10,000 parameters
@@ -281,11 +351,19 @@ Cost Monitoring
 
 ### Resource Scheduling
 ```
-Auto Scaling Schedule
+Development Schedule (Cost Optimized)
 │
-├── Business Hours (9 AM - 6 PM): Min 1, Max 3 tasks
-├── Off Hours (6 PM - 9 AM): Min 0, Max 1 tasks  
-└── Weekends: Min 0, Max 0 tasks
+├── Business Hours (9 AM - 6 PM Weekdays):
+│   ├── RDS: Running
+│   └── ECS: Min 1, Max 3 Rails tasks
+│
+├── Off Hours (6 PM - 9 AM Weekdays):
+│   ├── RDS: Stopped (save Free Tier hours)
+│   └── ECS: Min 0, Max 0 tasks
+│
+└── Weekends:
+    ├── RDS: Stopped
+    └── ECS: Min 0, Max 0 tasks
 ```
 
 This component architecture provides a comprehensive view of how all pieces fit together while maintaining cost optimization and Free Tier compliance.

@@ -2,7 +2,7 @@
 
 ## Architecture Summary
 
-The ECS Fargate infrastructure implements a modern containerized architecture optimized for AWS Free Tier usage, targeting demo and development workloads with cost controls and scalability.
+The ECS Fargate infrastructure implements a modern containerized architecture optimized for **Ruby on Rails applications** with **PostgreSQL**, targeting demo and development workloads with AWS Free Tier cost controls and scalability.
 
 ## High-Level Architecture
 
@@ -12,20 +12,20 @@ Internet
     ▼
 ┌─────────────────┐
 │ Application     │ ── ALB (Application Load Balancer)
-│ Load Balancer   │    - SSL Termination
-└─────────────────┘    - Health Checks
-    │                  - 750 hours/month Free Tier
+│ Load Balancer   │    - SSL Termination & Health Checks
+└─────────────────┘    - 750 hours/month Free Tier
+    │
     ▼
 ┌─────────────────┐
-│ ECS Fargate     │ ── Container Orchestration
+│ ECS Fargate     │ ── Rails Application Containers
 │ Cluster         │    - 0.25 vCPU, 512MB memory
-└─────────────────┘    - Auto-scaling to zero
+└─────────────────┘    - Auto-scaling capabilities
     │                  - 20GB-hours Free Tier
     ▼
 ┌─────────────────┐
-│ DynamoDB        │ ── NoSQL Database
-│ Tables          │    - Always Free: 25GB + 25 RCU/WCU
-└─────────────────┘    - Single-table design
+│ RDS PostgreSQL  │ ── Relational Database
+│ (db.t3.micro)   │    - 750 hours/month Free Tier
+└─────────────────┘    - 20GB storage + 20GB backup
     │
     ▼
 ┌─────────────────┐
@@ -33,6 +33,13 @@ Internet
 │ Logs            │    - 7-day retention
 └─────────────────┘    - 5GB ingestion Free Tier
 ```
+
+## Rails Application Benefits
+
+- ✅ **Full ActiveRecord ORM**: Native PostgreSQL support with migrations, associations, validations
+- ✅ **Rails Ecosystem**: Standard gems, generators, and development workflow maintained
+- ✅ **Database Features**: ACID compliance, complex queries, joins, and transactions
+- ✅ **Development Tools**: Rails console, rake tasks, and familiar database tooling
 
 ## Core Components
 
@@ -59,11 +66,12 @@ Internet
 - **Auto-scaling**: Scale to zero during off-hours
 - **Free Tier**: 20GB-hours storage + 5GB ephemeral storage/month
 
-### 4. DynamoDB Database
-- **Purpose**: Persistent data storage
-- **Advantages**: Always Free tier (25GB storage + 25 RCU/WCU)
-- **Design Pattern**: Single-table design for cost optimization
-- **Backup**: Point-in-time recovery (additional cost consideration)
+### 4. RDS PostgreSQL Database
+- **Purpose**: Relational data storage for Rails ActiveRecord ORM
+- **Instance**: db.t3.micro (Free Tier eligible - 750 hours/month)
+- **Storage**: 20GB General Purpose SSD (included in Free Tier)
+- **Features**: Automated backups, point-in-time recovery, maintenance windows
+- **Cost Optimization**: Scheduled start/stop during off-hours for development use
 
 ### 5. CloudWatch Logging
 - **Purpose**: Application and infrastructure monitoring
@@ -97,11 +105,11 @@ VPC (10.0.0.0/16)
 ## Data Flow
 
 ### Request Flow
-1. **User Request** → Application Load Balancer
-2. **ALB** → ECS Fargate Task (health check + route)
-3. **ECS Task** → DynamoDB (data operations)
-4. **DynamoDB** → ECS Task (response data)
-5. **ECS Task** → ALB → User (HTTP response)
+1. **User Request** → Application Load Balancer (HTTPS)
+2. **ALB** → ECS Fargate Task running Rails application (health check + route)
+3. **Rails App** → RDS PostgreSQL (ActiveRecord database operations)
+4. **PostgreSQL** → Rails App (query results)
+5. **Rails App** → ALB → User (HTTP response)
 
 ### Logging Flow
 1. **Application Logs** → CloudWatch Log Groups
@@ -116,9 +124,10 @@ VPC (10.0.0.0/16)
 - No direct internet access to ECS tasks (through ALB only)
 
 ### Data Security
-- DynamoDB encryption at rest (managed by AWS)
-- SSL/TLS encryption in transit via ALB
+- RDS PostgreSQL encryption at rest (managed by AWS)
+- SSL/TLS encryption in transit via ALB and RDS connections
 - IAM roles for service-to-service authentication
+- Database credentials managed via Systems Manager Parameter Store
 
 ### Secrets Management
 - Application secrets via Systems Manager Parameter Store
@@ -129,43 +138,46 @@ VPC (10.0.0.0/16)
 
 ### Horizontal Scaling
 - ECS Auto Scaling based on CPU/memory utilization
-- DynamoDB on-demand billing for automatic scaling
-- ALB distributes traffic across multiple ECS tasks
+- ALB distributes traffic across multiple Rails application tasks
+- RDS PostgreSQL connection pooling for efficient database connections
 
 ### Cost-Optimized Scaling
-- Scale to zero during off-hours (e.g., nights/weekends)
-- DynamoDB provisioned capacity for predictable workloads
+- ECS tasks scale to zero during off-hours (e.g., nights/weekends)
+- RDS scheduled start/stop automation for development hours only
 - CloudWatch alarms for cost threshold monitoring
+- Rails application optimized for quick startup times
 
 ## Monitoring & Observability
 
 ### Key Metrics
-- ECS task CPU/memory utilization
-- DynamoDB read/write capacity utilization
+- ECS task CPU/memory utilization for Rails applications
+- RDS PostgreSQL CPU/memory utilization and connection count
 - ALB response times and error rates
-- Free Tier usage across all services
+- Rails application response times and database query performance
+- Free Tier usage across ECS and RDS services
 
 ### Alerting
 - Cost threshold alerts (80% of $10 budget)
-- Service health alerts (task failures, high error rates)
-- Free Tier usage warnings
+- RDS Free Tier hour consumption warnings (600 hours = 80% threshold)
+- Service health alerts (task failures, high error rates, database connection issues)
+- Rails application error rate monitoring
 
 ## Free Tier Optimization
 
 ### Monthly Limits
-- **ECS Fargate**: 20GB-hours storage + 5GB ephemeral
-- **DynamoDB**: 25GB storage + 25 RCU/WCU (always free)
+- **ECS Fargate**: 20GB-hours storage + 5GB ephemeral storage
+- **RDS PostgreSQL**: 750 hours db.t3.micro + 20GB storage + 20GB backup
 - **ALB**: 750 hours + 15GB data processing
 - **CloudWatch**: 5GB log ingestion + 10 custom metrics
 - **Parameter Store**: 10,000 parameters
 
 ### Cost Controls
-1. Single AZ deployment
-2. Minimal resource allocations
-3. Auto-scaling to zero
-4. 7-day log retention
-5. On-demand DynamoDB billing
-6. Resource tagging for cost attribution
+1. Single AZ deployment (no cross-AZ data transfer charges)
+2. Minimal resource allocations (0.25 vCPU, 512MB memory)
+3. ECS auto-scaling to zero during off-hours
+4. RDS scheduled start/stop automation for development hours
+5. 7-day CloudWatch log retention
+6. Resource tagging for cost attribution and monitoring
 
 ## Alternative Configurations
 
@@ -177,11 +189,11 @@ For production use (outside Free Tier scope):
 - Enhanced monitoring and logging
 
 ### Serverless Alternative
-Alternative architecture using:
-- Lambda functions instead of ECS
-- API Gateway instead of ALB
-- DynamoDB (same)
-- CloudWatch (same)
+Alternative architecture for Rails using:
+- Lambda functions with Jets.rb framework instead of ECS
+- API Gateway instead of ALB  
+- Aurora Serverless PostgreSQL instead of RDS
+- CloudWatch (same monitoring and logging)
 
 ## Implementation Phases
 
@@ -191,14 +203,15 @@ Alternative architecture using:
 - Basic ALB configuration
 
 ### Phase 2: Application Deployment
-- Container registry (ECR)
-- ECS task definitions
-- Application deployment
+- Container registry (ECR) for Rails application images
+- ECS task definitions with Rails-specific configuration
+- Rails application deployment with health checks
 
 ### Phase 3: Data Layer
-- DynamoDB table setup
-- Application integration
-- Data migration tools
+- RDS PostgreSQL instance setup
+- Database security groups and parameter configuration
+- Rails database configuration and connection pooling
+- Database migrations and seed data
 
 ### Phase 4: Monitoring & Operations
 - CloudWatch dashboards

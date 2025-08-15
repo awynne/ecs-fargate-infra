@@ -134,31 +134,49 @@ Research and propose an architecture design for the ECS Fargate infrastructure, 
 - CloudWatch: 5GB log ingestion
 - Data transfer: 15GB outbound
 
+## Application Requirements Update
+
+**Critical Constraint**: The infrastructure must support a **Ruby on Rails application** that already uses **PostgreSQL** database.
+
+### Rails + Database Compatibility Analysis:
+- **PostgreSQL**: Native ActiveRecord support, full Rails ecosystem compatibility
+- **DynamoDB**: Would require complete application rewrite, loss of ActiveRecord ORM
+- **Decision**: Must use PostgreSQL to maintain Rails compatibility
+
 ## Recommendations Analysis
 
-### Primary Recommendation: Hybrid ECS Fargate with DynamoDB (Approach 3)
+### Primary Recommendation: ECS Fargate with RDS PostgreSQL (Approach 1)
 
 **Rationale**:
-1. **Cost Optimization**: DynamoDB's always-free tier (25GB + 25 RCU/WCU) provides persistent storage without consuming RDS hours
-2. **Container Benefits**: Maintains container-based deployment while optimizing costs
-3. **Scalability**: ECS tasks can scale to zero during off-hours
-4. **Future Growth**: Architecture can evolve with application needs
-5. **Cloud-Native**: Leverages managed services appropriately
+1. **Rails Compatibility**: Full ActiveRecord ORM support with PostgreSQL
+2. **Development Workflow**: Maintains Rails migrations, generators, and patterns  
+3. **Team Productivity**: No learning curve for NoSQL data modeling
+4. **Free Tier Utilization**: RDS 750 hours/month sufficient for development workloads
+5. **Container Benefits**: ECS Fargate for container orchestration
+
+**Rails-Specific Benefits**:
+- ✅ Keep existing database schema and migrations
+- ✅ Full ActiveRecord associations and validations
+- ✅ Rails console and database tooling
+- ✅ Existing gems and Rails patterns
+- ✅ Standard Rails development workflow
 
 **Implementation Strategy**:
-1. Start with minimal ECS task configuration (0.25 vCPU, 512MB memory)
-2. Use DynamoDB single-table design for initial simplicity
-3. Implement auto-scaling policies for cost control
-4. Use CloudWatch for monitoring and alerting
+1. ECS Fargate tasks (0.25 vCPU, 512MB memory) running Rails application
+2. RDS PostgreSQL db.t3.micro with 20GB storage
+3. Scheduled RDS scaling (stop during off-hours for cost optimization)
+4. Single AZ deployment for development use case
+5. CloudWatch monitoring and cost alerts
 
-### Secondary Recommendation: Serverless with DynamoDB (Approach 2)
+### Secondary Recommendation: Single EC2 with Docker Compose (Approach 4)
 
-**Use Case**: If the application is event-driven or has sporadic usage patterns
+**Use Case**: If RDS costs become prohibitive or simpler architecture preferred
 
 **Benefits**:
-- Optimal cost efficiency for low-traffic scenarios
-- Automatic scaling and infrastructure management
-- Faster initial deployment
+- Single t2.micro instance (750 hours Free Tier)
+- PostgreSQL running in container alongside Rails
+- Lower complexity for development environment
+- Maximum Free Tier utilization
 
 ## Next Steps
 
