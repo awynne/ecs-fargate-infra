@@ -20,9 +20,11 @@ Terraform-managed AWS ECS Fargate infrastructure configured for Free Tier usage.
 │   ├── check-free-tier.py
 │   └── cost-monitor.py
 ├── docs/                     # Technical documentation
+│   ├── technical-specs/
+│   ├── research/
 │   ├── architecture/
-│   ├── runbooks/
-│   └── decisions/            # ADRs
+│   ├── ADR/                  # Architecture Decision Records
+│   └── runbooks/
 ├── docker/                   # Container definitions
 └── .github/workflows/        # CI/CD automation
 ```
@@ -30,22 +32,23 @@ Terraform-managed AWS ECS Fargate infrastructure configured for Free Tier usage.
 ## Documentation Strategy
 
 ### Documentation Types and Locations
-- **Technical specs**: `docs/` directory in source control
+- **Technical specs**: `docs/technical-specs/` directory in source control
 - **Task management**: JIRA tickets for status tracking
-- **Research/spikes**: Confluence wiki pages for evaluation
-- **Architecture decisions**: `docs/decisions/` as ADR files
+- **Research/spikes**: `docs/research/` directory in source control
+- **Architecture decisions**: `docs/ADR/` as ADR files
+- **Architecture design**: `docs/architecture/` directory
 - **Operational procedures**: `docs/runbooks/`
 
 ### Documentation Workflow
-1. **Research phase**: Document findings in Confluence "Software Development" space under `ecs-fargate-infra` page tree
-2. **Design phase**: Create technical docs in `docs/architecture/`
-3. **Implementation**: Update docs during development
-4. **Operations**: Maintain runbooks in `docs/runbooks/`
+1. **Research phase**: Document findings in `docs/research/` using YYYY-MM-topic format
+2. **Technical Design**: Create specs in `docs/technical-specs/` and architecture in `docs/architecture/`
+3. **Architecture Decisions**: Record as ADRs in `docs/ADR/` using sequential numbering
+4. **Implementation**: Update docs during development
+5. **Operations**: Maintain runbooks in `docs/runbooks/`
 
 ### Tool Configuration
 - **GitHub**: Use `gh` CLI with `awynne` account for repository operations
 - **JIRA**: Use MCP server integration with WebStore project for task management
-- **Confluence**: Use Atlassian MCP with "Software Development" space, repo-specific page tree: `ecs-fargate-infra`
 - **Documentation**: Use context7 MCP for language syntax and framework documentation
 
 ## Prerequisites
@@ -393,11 +396,12 @@ gh pr create --title "WS-123: Configure load balancer" --body "Part 2 of ECS ser
 - No secrets detection
 
 ### Documentation Creation Process
-1. **Research**: Create Confluence page in "Software Development" space under `ecs-fargate-infra/research/`
-2. **Technical Design**: Document in `docs/architecture/` with ADRs in `docs/decisions/`
-3. **Task Management**: Create JIRA tickets in WebStore project for implementation tracking
-4. **Code Changes**: Use `gh` CLI with `awynne` account for PR creation and management
-5. **Language/Framework Questions**: Query context7 MCP for syntax and best practices
+1. **Research**: Document findings in `docs/research/` using YYYY-MM-topic naming convention
+2. **Technical Design**: Create specs in `docs/technical-specs/` and architecture docs in `docs/architecture/`
+3. **Architecture Decisions**: Record as ADRs in `docs/ADR/` with sequential numbering
+4. **Task Management**: Create JIRA tickets in WebStore project for implementation tracking
+5. **Code Changes**: Use `gh` CLI with `awynne` account for PR creation and management
+6. **Language/Framework Questions**: Query context7 MCP for syntax and best practices
 
 ### Cost Management Checklist
 - [ ] Verify Free Tier eligibility  
