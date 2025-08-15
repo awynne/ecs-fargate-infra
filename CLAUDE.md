@@ -445,3 +445,4 @@ gh pr create --title "WS-123: Configure load balancer" --body "Part 2 of ECS ser
 - [AWS Free Tier Details](https://aws.amazon.com/free/)
 - [AWS Cost Calculator](https://calculator.aws/)
 - Technical documentation: `docs/` directory
+- Jira project is located at https://awynnejira.atlassian.net
